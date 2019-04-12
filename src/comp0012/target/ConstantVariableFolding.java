@@ -13,18 +13,18 @@ public class ConstantVariableFolding
         int j = 1;
         return i + j;
     }
-
-    public boolean methodThree(){
-        int x = 12345;
-        int y = 54321;
-        return x > y;
-    }
-
-    public boolean methodFour(){
-        long x = 4835783423L;
-        long y = 400000;
-        long z = x + y;
-        return x > y;
-    }
+//
+//    public boolean methodThree(){
+//        int x = 12345;
+//        int y = 54321;
+//        return x > y;
+//    }
+//
+//    public boolean methodFour(){
+//        long x = 4835783423L;
+//        long y = 400000;
+//        long z = x + y;
+//        return x > y;
+//    }
 
 }

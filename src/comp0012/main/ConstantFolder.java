@@ -3,6 +3,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Stack;
 
@@ -36,7 +37,7 @@ public class ConstantFolder
 		}
 	}
 
-	private void arithematic(Instruction instruction) {
+	private void arithmetic(Instruction instruction) {
 		Number one = constants.pop();
 		Number two = constants.pop();
 		Number result = null;
@@ -44,7 +45,7 @@ public class ConstantFolder
 		if (instruction instanceof IADD) {
 			result = one.intValue() + two.intValue();
 		}
-		/*else if (instruction instanceof DADD) {
+		else if (instruction instanceof DADD) {
 			result = one.doubleValue() + two.doubleValue();
 		}
 		else if (instruction instanceof FADD) {
@@ -88,9 +89,56 @@ public class ConstantFolder
 		}
 		else if (instruction instanceof LDIV) {
 			result = one.longValue() / two.longValue();
-		}*/
+		}
 
-		if (result != null) constants.push(result);
+		if (result != null) {
+			constants.push(result);
+			System.out.println(constants);
+		}
+	}
+
+	private InstructionHandle doLDC(ConstantPoolGen cpgen, InstructionList instructionList, InstructionHandle handle, boolean ifDelete) {
+		Instruction instruction = handle.getInstruction();
+		Number number = null;
+
+		if (instruction instanceof LDC) {
+			number = (Number) ((LDC) instruction).getValue(cpgen);
+		}
+		else if (instruction instanceof LDC2_W) {
+			number = ((LDC2_W) instruction).getValue(cpgen);
+		}
+		else if (instruction instanceof BIPUSH) {
+			number = ((BIPUSH) instruction).getValue();
+		}
+		else if (instruction instanceof SIPUSH) {
+			number = ((SIPUSH) instruction).getValue();
+		}
+
+		InstructionHandle LDCNext = handle.getNext();
+		if (ifDelete) {
+			try {
+				instructionList.delete(handle);
+			} catch (TargetLostException e) {
+				e.printStackTrace();
+			}
+		}
+		else {
+			InstructionHandle insertPoint = handle.getNext();
+			if (!(instruction instanceof LDC || instruction instanceof LDC2_W)) {
+				try {
+					instructionList.delete(handle);
+				} catch (TargetLostException e) {
+					e.printStackTrace();
+				}
+				if (instruction instanceof BIPUSH)
+					instructionList.insert(insertPoint, new LDC(cpgen.addInteger((Integer) number)));
+				else if (instruction instanceof SIPUSH)
+					instructionList.insert(insertPoint, new LDC2_W(cpgen.addInteger((Integer) number)));
+			}
+		}
+		constants.push(number); // push when get constants
+
+		return LDCNext;
 	}
 
 	private void optimisation(ClassGen cgen, ConstantPoolGen cpgen, Method method) {
@@ -99,62 +147,105 @@ public class ConstantFolder
 				method.getArgumentTypes(),null,method.getName(),
 				cgen.getClassName(),instructionList,cpgen);
 		int before = instructionList.getLength();
-		InstructionHandle LDCNext = null;
 
-		System.out.println(before);
+		InstructionHandle LDCNext = null;
+		HashMap<Integer,Number> storeValues = new HashMap<>();
+
 		for (InstructionHandle handle: instructionList.getInstructionHandles()) {
 			Instruction instruction = handle.getInstruction();
-			Number number = null;
-			boolean isConstant = false;
+
+			boolean isLDC = (instruction instanceof LDC || instruction instanceof LDC2_W
+							|| instruction instanceof BIPUSH || instruction instanceof SIPUSH);
+			boolean isArithmetic = (instruction instanceof ArithmeticInstruction);
+			boolean isStore = (instruction instanceof StoreInstruction);
+			boolean isConstant = (instruction instanceof ConstantPushInstruction
+							&& !(instruction instanceof BIPUSH || instruction instanceof SIPUSH));
+			boolean isI2D = (instruction instanceof I2D);
+			boolean isLoad = (instruction instanceof LoadInstruction);
 
 
-			if (instruction instanceof LDC) {
-				number = (Number) ((LDC) instruction).getValue(cpgen);
-				isConstant = true;
+			if (isLDC && (handle.getNext().getInstruction() instanceof StoreInstruction)) {
+				LDCNext = doLDC(cpgen,instructionList,handle,false);
+				System.out.println("After store instruction: " +constants);
+			}
+			else if (isLDC) {
+				LDCNext = doLDC(cpgen,instructionList,handle,true);
+			}
+
+			if (isStore) {
+				Number value = constants.pop();
+				Integer index = ((StoreInstruction)instruction).getIndex();
+				storeValues.put(index,value);
+				System.out.println("Value to store: " +index+">>>"+value); // pop when store
+			}
+
+			if (isConstant && !(handle.getNext().getInstruction() instanceof StoreInstruction)) {
+				constants.push(((ConstantPushInstruction)instruction).getValue());
 				try {
-					LDCNext = handle.getNext();
 					instructionList.delete(handle);
 				} catch (TargetLostException e) {
 					e.printStackTrace();
 				}
 			}
-//			else if (instruction instanceof LDC2_W) {
-//				number = (Number) ((LDC2_W) instruction).getValue(cpgen);
-//				isConstant = true;
-//				instructionList.delete(handle);
-//			}
-//			else if (instruction instanceof BIPUSH) {
-//				number = (Number) ((BIPUSH) instruction).getValue();
-//				isConstant = true;
-//				instructionList.delete(handle);
-//			}
-//			else if (instruction instanceof SIPUSH) {
-//				number = (Number) ((SIPUSH) instruction).getValue();
-//				isConstant = true;
-//				instructionList.delete(handle);
-//			}
-
-			if (isConstant) {
-				constants.push(number);
-				System.out.println(constants);
-			}
-
-
-			if (instruction instanceof ArithmeticInstruction && constants.size() >= 2) {
-				arithematic(instruction);
+			else if (isConstant){
+				constants.push(((ConstantPushInstruction)instruction).getValue());
 				InstructionHandle insertPoint = handle.getNext();
 				try {
 					instructionList.delete(handle);
 				} catch (TargetLostException e) {
 					e.printStackTrace();
 				}
-				instructionList.insert(insertPoint,new LDC(cpgen.addInteger((int)constants.pop())));
-				System.out.println("ccc:  "+constants);
+				Number value = constants.pop();
+				if (value instanceof Integer) { instructionList.insert(insertPoint, new LDC(cpgen.addInteger((Integer) value))); }
+				else if (value instanceof Double) { instructionList.insert(insertPoint, new LDC2_W(cpgen.addDouble((Double) value))); }
+				else if (value instanceof Float) { instructionList.insert(insertPoint, new LDC(cpgen.addFloat((Float) value))); }
+				else if (value instanceof Long) { instructionList.insert(insertPoint, new LDC2_W(cpgen.addLong((Long) value))); }
+				if (!(insertPoint.getInstruction() instanceof ReturnInstruction)) constants.push(value);
+			}
+
+			if (isI2D) {
+				try {
+					instructionList.delete(handle);
+				} catch (TargetLostException e) {
+					e.printStackTrace();
+				}
+			}
+
+			if (isArithmetic) {
+				if (constants.size() >= 2) {
+					arithmetic(instruction);
+					InstructionHandle insertPoint = handle.getNext();
+					try {
+						instructionList.delete(handle);
+					} catch (TargetLostException e) {
+						e.printStackTrace();
+					}
+
+					Number value = constants.pop();
+					if (value instanceof Integer) { instructionList.insert(insertPoint, new LDC(cpgen.addInteger((Integer) value))); }
+					else if (value instanceof Double) { instructionList.insert(insertPoint, new LDC2_W(cpgen.addDouble((Double) value))); }
+					else if (value instanceof Float) { instructionList.insert(insertPoint, new LDC(cpgen.addFloat((Float) value))); }
+					else if (value instanceof Long) { instructionList.insert(insertPoint, new LDC2_W(cpgen.addLong((Long) value))); }
+					if (!(insertPoint.getInstruction() instanceof ReturnInstruction)) constants.push(value);
+					System.out.println("ccc:  " + constants);
+				}
+			}
+
+			if (isLoad && !(instruction instanceof ALOAD)) {
+				int stackIndex = ((LoadInstruction)instruction).getIndex();
+				System.out.println(stackIndex);
+				constants.push(storeValues.get(stackIndex));
 			}
 		}
 
-		if (constants.size() == 1) {
-			instructionList.insert(LDCNext,new LDC(cpgen.addInteger((int)constants.pop())));
+		//System.out.println("constants size: "+constants.size());
+		if (constants.size() > 0) {
+			Number value = constants.pop();
+			if (value instanceof Integer) { instructionList.insert(LDCNext, new LDC(cpgen.addInteger((Integer) value))); }
+			else if (value instanceof Double) { instructionList.insert(LDCNext, new LDC2_W(cpgen.addDouble((Double) value))); }
+			else if (value instanceof Float) { instructionList.insert(LDCNext, new LDC(cpgen.addFloat((Float) value))); }
+			else if (value instanceof Long) { instructionList.insert(LDCNext, new LDC2_W(cpgen.addLong((Long) value))); }
+			constants.clear();
 		}
 
 		int after = instructionList.getLength();
@@ -165,6 +256,10 @@ public class ConstantFolder
 
 		Method newMethod = methodGen.getMethod();
 		cgen.replaceMethod(method,newMethod);
+
+		//System.out.println("Constant pool: "+cpgen);
+		System.out.println(method.getName()+">>>>");
+		System.out.println(methodGen.getInstructionList());
 	}
 	
 	public void optimize(){
@@ -178,7 +273,8 @@ public class ConstantFolder
 			}
 			isOptimised = false;
 		}
-        
+
+		this.optimized = gen.getJavaClass();
 		this.optimized = cgen.getJavaClass();
 	}
 
