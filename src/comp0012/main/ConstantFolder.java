@@ -40,6 +40,9 @@ public class ConstantFolder
 		}
 	}
 
+	/*
+	The helper function for doing arithmetic operations
+	 */
 	private void arithmetic(Instruction instruction) {
 		Number one = constants.pop();
 		Number two = constants.pop();
@@ -100,7 +103,11 @@ public class ConstantFolder
 		}
 	}
 
-
+	/*
+	The function to handle all ldc, ldc2_w, sipush and bipush instructions
+	The line will be deleted if not followed by a StoreInstruction
+	otherwise, replace the line with new ldc or ldc2_w, depending on the type of number
+	 */
 	private InstructionHandle doLDC(ConstantPoolGen cpgen, InstructionList instructionList, InstructionHandle handle, boolean ifDelete) {
 		Instruction instruction = handle.getInstruction();
 		Number number = null;
@@ -165,7 +172,9 @@ public class ConstantFolder
 		for (InstructionHandle handle : instructionList.getInstructionHandles()) {
 			Instruction instruction = handle.getInstruction();
 
-			//Get current instruction type
+			/*
+			The following block of codes determine the type of the current line
+			 */
 			boolean isLDC = (instruction instanceof LDC || instruction instanceof LDC2_W
 							|| instruction instanceof BIPUSH || instruction instanceof SIPUSH);
 			boolean isArithmetic = (instruction instanceof ArithmeticInstruction);
@@ -178,7 +187,10 @@ public class ConstantFolder
 			boolean isCMP = (instruction instanceof IfInstruction);
 			boolean isGOTO = (instruction instanceof GOTO);
 
-
+			/*
+			If the line is an instance of LDC instructions
+			go to the doLDC function defined above, which this line will be handled inside the function
+			 */
 			if (isLDC && (handle.getNext().getInstruction() instanceof StoreInstruction)) {
 				LDCNext = doLDC(cpgen,instructionList,handle,false);
 //				System.out.println("After store instruction: " +constants);
@@ -187,13 +199,27 @@ public class ConstantFolder
 				LDCNext = doLDC(cpgen,instructionList,handle,true);
 			}
 
+			/*
+			If it is StoreInstruction
+			we pop the top of stack
+			and update our own HashMap which simulates the local variable pool
+			 */
 			else if (isStore) {
 				Number value = constants.pop(); // pop when store
-				Integer index = ((StoreInstruction)instruction).getIndex();
+				Integer index = ((StoreInstruction)instruction).getIndex(); //return the location index to store the value
 				storeValues.put(index,value);
 //				System.out.println("Value to store: " +index+">>>"+value);
 			}
 
+			/*
+			Handling iconst, dconst, fconst, lconst etc.
+
+			If the iconst is involved in a IfInstruction or GOTOInstrction,
+			then check if the constant is the target of the IfInstruction.
+			Keep the desired result by replacing the current line with new iconst instruction,
+			which the value is poped from the stack.
+			Delete the other target directly (e.g. if result is true, iconst_0 is the other target which can be deleted)
+			 */
 			else if (isConstant && !(handle.getNext().getInstruction() instanceof StoreInstruction)) {
 				if (passedIf && handle.getPosition() == ifTarget) {
 					instructionList.insert(handle,new ICONST((Integer) constants.pop()));
@@ -220,6 +246,12 @@ public class ConstantFolder
 					}
 				}
 			}
+
+			/*
+			Since iconst_1 is regarded as true when poped and iconst_0 is regarded as false when poped
+			Replace the iconst instruction if it is followed by a StoreInstruction,
+			otherwise the reconstructed code after optimisation will regard the number constant as a boolean constant.
+			 */
 			else if (isConstant){
 				Number value = ((ConstantPushInstruction)instruction).getValue();
 				constants.push(value);
@@ -237,6 +269,10 @@ public class ConstantFolder
 				else if (value instanceof Long) { instructionList.insert(insertPoint, new LDC2_W(cpgen.addLong((Long) value))); }
 			}
 
+			/*
+			As all type casting is done in the helper function of arithmetic instruction
+			No need to worry about the casting in bytecode
+			 */
 			else if (isI2D) {
 				try {
 					instructionList.delete(handle);
@@ -245,6 +281,10 @@ public class ConstantFolder
 				}
 			}
 
+			/*
+			If Arithmetic instruction, go to the helper function and obtain the result
+			Replace the current line with a ldc / ldc2_w instruction
+			 */
 			else if (isArithmetic) {
 				if (constants.size() >= 2) {
 					arithmetic(instruction);
@@ -271,6 +311,10 @@ public class ConstantFolder
 				constants.push(storeValues.get(stackIndex));
 			}
 
+			/*
+			Handle comparison instructions
+			record result on stack
+			 */
 			else if (isCMP) {
 				if (instruction instanceof IF_ICMPLE) {
 					Number y = constants.pop();
@@ -312,6 +356,10 @@ public class ConstantFolder
 				}
 			}
 
+			/*
+			Handle a special type of comparison instruction
+			record the result on stack
+			 */
 			else if (isLCMP && constants.size() >= 2) {
 				Number one = constants.pop();
 				Number two = constants.pop();
@@ -334,6 +382,10 @@ public class ConstantFolder
 		}
 
 		//System.out.println("constants size: "+constants.size());
+
+		/*
+		Prevent eliminating too much LDC instructions
+		 */
 		if (constants.size() > 0 && !passedIf) {
 			Number value = constants.pop();
 			if (value instanceof Integer) { instructionList.insert(LDCNext, new LDC(cpgen.addInteger((Integer) value))); }
@@ -343,9 +395,12 @@ public class ConstantFolder
 			constants.clear();
 		}
 		int after = instructionList.getLength();
-		isOptimised = (before == after);
+		isOptimised = (before == after); //FLAG to indicate if fully optimised
 
-		//Simple dead code removal here
+		/*
+		Simple dead code removal
+		carried out after the bytecode is fully optimised
+		 */
 		if (isOptimised) {
 			ArrayList<Integer> usedLoad = new ArrayList<>();
 			for (InstructionHandle handle : instructionList.getInstructionHandles()) {
@@ -379,14 +434,18 @@ public class ConstantFolder
 		methodGen.setMaxStack();
 		methodGen.setMaxLocals();
 
+		//Replacing old bytecode with the optimised new bytecode
 		Method newMethod = methodGen.getMethod();
 		cgen.replaceMethod(method,newMethod);
 
-		//System.out.println("Constant pool: "+cpgen);
+//		System.out.println("Constant pool: "+cpgen);
 //		System.out.println(method.getName());
 //		System.out.println(methodGen.getInstructionList());
 	}
-	
+
+	/*
+	Optimisation carried out here
+	 */
 	public void optimize(){
 		ClassGen cgen = new ClassGen(original);
 		ConstantPoolGen cpgen = cgen.getConstantPool();
@@ -395,26 +454,26 @@ public class ConstantFolder
 		for (int i = 0; i < methods.length; i++) {
 			optimisation(cgen, cpgen, methods[i]);
 			while (!isOptimised) {
+				/*
+				The code keeps being optimised
+				until the length of bytecode is the same before and after an optimisation
+				(meaning fully optimised)
+				 */
 				optimisation(cgen,cpgen,cgen.getMethods()[i]);
 			}
-			isOptimised = false;
+			isOptimised = false; //set the flag to false for optimising the next method in file
 			passedIf = false;
 		}
 
-//		Method[] newMethods = cgen.getMethods();
-//		for (Method method : newMethods) {
-//			MethodGen methodGen = new MethodGen(method, cgen.getClassName(), cpgen);
-//			System.out.println(cgen.getClassName() + " > " + method.getName());
-//			System.out.println(methodGen.getInstructionList());
-//		}
 
 		this.optimized = gen.getJavaClass();
 		this.optimized = cgen.getJavaClass();
 	}
 
-	
-	public void write (String optimisedFilePath)
-	{
+	/*
+	Writing out the optimised bytecode to a new file in destination path
+	 */
+	public void write (String optimisedFilePath) {
 		this.optimize();
 
 		try {
