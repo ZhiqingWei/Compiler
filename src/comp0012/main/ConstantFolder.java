@@ -154,6 +154,9 @@ public class ConstantFolder
 		return LDCNext;
 	}
 
+	/*
+	Function doing the optimisation procedure
+	 */
 	private void optimisation(ClassGen cgen, ConstantPoolGen cpgen, Method method) {
 		InstructionList instructionList = new InstructionList(method.getCode().getCode());
 		MethodGen methodGen = new MethodGen(method.getAccessFlags(),method.getReturnType(),
